@@ -348,7 +348,7 @@ newTrial("go",
 
 
 // ============================================================
-// EXPERIMENTAL TRIALS - 32 critical verbs alternating with 32 fillers
+// EXPERIMENTAL TRIALS - unrestricted shuffle of 32 criticals and 32 fillers
 // ============================================================
 // The lookup table fixes the 16 NP1-bias and 16 NP2-bias verbs.
 // Critical.csv remains unchanged. At runtime, each selected item contributes
@@ -476,11 +476,10 @@ Template("dummy", () => {
   const prolificId = window.PROLIFIC_ID;
 
   const globalSeed = hashStringToUint32(prolificId);
-  // Independent random streams keep condition assignment, item order, filler
-  // order and answer-side randomization reproducible but mutually isolated.
+  // Independent streams keep condition assignment, full trial order and
+  // answer-side randomization reproducible but mutually isolated.
   const conditionRand = mulberry32(hashStringToUint32(prolificId + "|causality"));
-  const criticalOrderRand = mulberry32(hashStringToUint32(prolificId + "|critical-order"));
-  const fillerOrderRand = mulberry32(hashStringToUint32(prolificId + "|filler-order"));
+  const trialOrderRand = mulberry32(hashStringToUint32(prolificId + "|full-trial-order"));
   const answerSideRand = mulberry32(hashStringToUint32(prolificId + "|answer-side"));
 
   const itemKeys = Object.keys(criticalItems).sort((a, b) => {
@@ -599,15 +598,25 @@ Template("dummy", () => {
     });
   }
 
-  // Independently randomize critical and filler order. They will be zipped
-  // afterward so every critical is immediately followed by one filler.
-  fisherYatesSeeded(selectedRows, criticalOrderRand);
-  fisherYatesSeeded(fillerRows, fillerOrderRand);
+  // Shuffle the entire pool once, without alternation, run-length limits,
+  // fixed starting type, or balancing the two halves by trial type/condition.
+  const schedule = fisherYatesSeeded([
+    ...selectedRows.map((entry, index) => ({ type: "critical", index })),
+    ...fillerRows.map((row, index) => ({ type: "filler", index }))
+  ], trialOrderRand);
+  const positions = { critical: [], filler: [] };
+  const halfPoint = Math.floor(schedule.length / 2);
+  const typeCounts = { critical: 0, filler: 0 };
+  schedule.forEach((entry, index) => {
+    positions[entry.type][entry.index] = {
+      position: index + 1,
+      typePosition: ++typeCounts[entry.type],
+      half: index < halfPoint ? "first" : "second",
+      label: index < halfPoint ? "experimental_firsthalf" : "experimental_secondhalf"
+    };
+  });
 
-  // STEP 3: build trials in final order
   const selectedTrials = [];
-
-  const halfPoint = Math.floor(selectedRows.length / 2);
 
   for (let i = 0; i < selectedRows.length; i++) {
     const {
@@ -626,7 +635,8 @@ Template("dummy", () => {
     const rightText = swapSides ? selectedRow.left  : selectedRow.right;
     const correctKey = swapSides ? flipCorrectKey(selectedRow.correct) : selectedRow.correct;
 
-    const trialLabel = i < halfPoint ? "experimental_firsthalf" : "experimental_secondhalf";
+    const placement = positions.critical[i];
+    const trialLabel = placement.label;
 
     const trial = [trialLabel, "PennController", newTrial(
       newFunction("set_critical_start_" + itemNumber, function() {
@@ -741,7 +751,8 @@ Template("dummy", () => {
     )
       .log("PROLIFIC_ID", prolificId)
       .log("trial_type", "critical")
-      .log("randomization_method", "seeded_randomized_block_within_verb_bias")
+      .log("randomization_method", "seeded_unrestricted_full_pool_shuffle")
+      .log("condition_assignment_method", "seeded_randomized_block_within_verb_bias")
       .log("congruent_items_per_bias", 13)
       .log("incongruent_items_per_bias", 3)
       .log("randomization_seed", globalSeed)
@@ -793,9 +804,10 @@ Template("dummy", () => {
       .log("right", rightText)
       .log("raw_correct", selectedRow.correct)
       .log("swapSides", swapSides ? 1 : 0)
-      .log("critical_position", i + 1)
-      .log("experimental_position", 2 * i + 1)
-      .log("critical_half", i < halfPoint ? "first" : "second")
+      .log("critical_position", placement.typePosition)
+      .log("experimental_position", placement.position)
+      .log("critical_half", placement.half)
+      .log("experimental_half", placement.half)
       .log("q_onset_critical_ms", () => window.__qOnset.critical[String(itemNumber)] ?? "")
     ];
 
@@ -812,9 +824,13 @@ Template("dummy", () => {
     const leftText = swapSides ? fillerRow.right : fillerRow.left;
     const rightText = swapSides ? fillerRow.left : fillerRow.right;
     const correctKey = swapSides ? flipCorrectKey(fillerRow.correct) : fillerRow.correct;
-    const trialLabel = i < halfPoint ? "experimental_firsthalf" : "experimental_secondhalf";
+    const placement = positions.filler[i];
+    const trialLabel = placement.label;
 
     const fillerTrial = [trialLabel, "PennController", newTrial(
+      newFunction("set_section_start_filler_" + fillerItem, function() {
+        if (window.__criticalStart === null) window.__criticalStart = Date.now();
+      }).call(),
       newText("filler_inst_" + fillerItem, "Drücken Sie die Leertaste, um im Satz fortzufahren.")
         .cssContainer({"font-size":"24px", "font-style":"italic", "margin-bottom":"1em"})
         .center()
@@ -920,7 +936,7 @@ Template("dummy", () => {
     )
       .log("PROLIFIC_ID", prolificId)
       .log("trial_type", "filler")
-      .log("randomization_method", "seeded_independent_order_then_strict_alternation")
+      .log("randomization_method", "seeded_unrestricted_full_pool_shuffle")
       .log("randomization_seed", globalSeed)
       .log("item", fillerRow.item)
       .log("source_group", fillerRow.source_group)
@@ -933,21 +949,18 @@ Template("dummy", () => {
       .log("right", rightText)
       .log("raw_correct", fillerRow.correct)
       .log("swapSides", swapSides ? 1 : 0)
-      .log("filler_position", i + 1)
-      .log("experimental_position", 2 * i + 2)
-      .log("experimental_half", i < halfPoint ? "first" : "second")
+      .log("filler_position", placement.typePosition)
+      .log("experimental_position", placement.position)
+      .log("experimental_half", placement.half)
       .log("q_onset_filler_ms", () => window.__qOnset.filler[fillerItem] ?? "")
     ];
 
     fillerTrials.push(fillerTrial);
   }
 
-  // Strict C-F-C-F alternation while preserving each independently shuffled order.
-  const interleavedTrials = [];
-  for (let i = 0; i < selectedTrials.length; i++) {
-    interleavedTrials.push(selectedTrials[i]);
-    interleavedTrials.push(fillerTrials[i]);
-  }
+  const experimentalTrials = schedule.map(entry =>
+    entry.type === "critical" ? selectedTrials[entry.index] : fillerTrials[entry.index]
+  );
 
   // A separate random stream preserves all existing experimental assignments.
   const retentionItems = buildRetentionItems(selectedRows, criticalItems,
@@ -1004,9 +1017,9 @@ Template("dummy", () => {
       .log(prefix + "response_seen", () => retentionState.responses[i].response)
       .log(prefix + "correct", () => retentionState.responses[i].correct);
   });
-  interleavedTrials.push(["retention", "PennController", retentionTrial]);
+  experimentalTrials.push(["retention", "PennController", retentionTrial]);
 
-  window.items = (window.items || []).concat(interleavedTrials);
+  window.items = (window.items || []).concat(experimentalTrials);
   return {};
 });
 
