@@ -112,7 +112,16 @@ Sequence("consent",
   "mid_break", 
   "experimental_secondhalf", 
   "record_critical_time",
-  "conclude", "exit", "demo", "debrief", "record_total_time", SendResults(), "submit");
+  "conclude",
+  "exit",
+  "demo",
+  "debrief",
+  "record_total_time",
+  SendResults(),
+  "retention",
+  SendResults(),
+  "submit"
+);
 
 newTrial("consent",
     newHtml("consent_form", "consent.html")
@@ -378,6 +387,43 @@ function fisherYatesSeeded(array, rand) {
     [array[i], array[j]] = [array[j], array[i]];
   }
   return array;
+}
+
+// Recognition uses target sentences actually rendered by DashedSentence,
+// with presentation chunk markers removed. No context or answers are shown.
+function retentionSentence(row) {
+  return String(row.target_story || "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function escapeRetentionHtml(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function buildRetentionItems(selectedRows, itemsById, rand) {
+  const sampled = fisherYatesSeeded(selectedRows.slice(), rand).slice(0, 20);
+  if (sampled.length !== 20) throw new Error("Retention requires 20 distinct critical items");
+  const seenSentences = new Set(selectedRows.map(entry => retentionSentence(entry.selectedRow)));
+  const probes = sampled.map((entry, index) => {
+    const seen = index < 10;
+    const presentedRow = entry.selectedRow;
+    const probeRow = seen ? presentedRow : itemsById[entry.itemNumber].find(
+      row => String(row.cond_group) !== String(presentedRow.cond_group)
+    );
+    if (!probeRow) throw new Error("Missing retention lure for item=" + entry.itemNumber);
+    const sentence = retentionSentence(probeRow);
+    if (!sentence || (!seen && seenSentences.has(sentence))) {
+      throw new Error("Invalid retention sentence for item=" + entry.itemNumber);
+    }
+    return { item: entry.itemNumber, seen, sentence,
+      presentedCondition: String(presentedRow.cond_group),
+      probeCondition: String(probeRow.cond_group) };
+  });
+  if (new Set(probes.map(probe => probe.sentence)).size !== 20) {
+    throw new Error("Retention sentences must be unique");
+  }
+  return fisherYatesSeeded(probes, rand);
 }
 
 // Step 1: Read the fixed set of 32 verbs from the lookup table.
@@ -903,6 +949,63 @@ Template("dummy", () => {
     interleavedTrials.push(selectedTrials[i]);
     interleavedTrials.push(fillerTrials[i]);
   }
+
+  // A separate random stream preserves all existing experimental assignments.
+  const retentionItems = buildRetentionItems(selectedRows, criticalItems,
+    mulberry32(hashStringToUint32(prolificId + "|retention")));
+  const retentionState = { started: null, duration: null, correct: null,
+    hits: null, falseAlarms: null, responses: [] };
+  const retentionHtml = `<form id="retention-form" style="font-size:20px;line-height:1.6">
+    <h2>Kurzer Gedächtnistest</h2>
+    <p>Bitte markieren Sie alle Sätze, die Sie im Hauptteil dieses Experiments
+    genau in dieser Form gelesen haben. Lassen Sie die anderen Sätze unmarkiert.
+    Manche Sätze ähneln den zuvor gelesenen Sätzen, unterscheiden sich aber in Details.</p>
+    <p>Geben Sie einfach Ihr Bestes. Es spielt keine Rolle, wie viele Antworten richtig sind.</p>
+    ${retentionItems.map((probe, i) => `<label style="display:block;margin:18px 0;padding:10px;border:1px solid #ddd">
+      <input type="checkbox" name="retention_${i + 1}" value="seen" />
+      ${i + 1}. ${escapeRetentionHtml(probe.sentence)}</label>`).join("")}
+    <p>Unmarkiert bedeutet: nicht genau in dieser Form gelesen.
+    Sie können auch fortfahren, wenn Sie keinen Satz wiedererkennen.</p>
+    </form>`;
+  let retentionTrial = newTrial("retention",
+    newHtml("retention_checklist", retentionHtml).cssContainer({width: "900px"}).print().log(),
+    newFunction("retention_start", () => { retentionState.started = Date.now(); }).call(),
+    newButton("retention_finish", "Antworten zum Gedächtnistest absenden")
+      .center().print().wait(),
+    newFunction("retention_score", () => {
+      retentionState.duration = Date.now() - retentionState.started;
+      retentionState.responses = retentionItems.map((probe, i) => {
+        const checkbox = document.querySelector(`#retention-form input[name="retention_${i + 1}"]`);
+        if (!checkbox) throw new Error("Missing retention checkbox " + (i + 1));
+        const response = checkbox.checked;
+        return { response: response ? 1 : 0, correct: response === probe.seen ? 1 : 0 };
+      });
+      retentionState.correct = retentionState.responses.reduce((sum, r) => sum + r.correct, 0);
+      retentionState.hits = retentionState.responses.filter((r, i) => retentionItems[i].seen && r.response).length;
+      retentionState.falseAlarms = retentionState.responses.filter((r, i) => !retentionItems[i].seen && r.response).length;
+    }).call()
+  )
+    .log("trial_type", "retention")
+    .log("retention_randomization_version", "target_sentence_10_seen_10_lures_v1")
+    .log("retention_total", 20)
+    .log("retention_correct_count", () => retentionState.correct)
+    .log("retention_hits", () => retentionState.hits)
+    .log("retention_misses", () => 10 - retentionState.hits)
+    .log("retention_false_alarms", () => retentionState.falseAlarms)
+    .log("retention_correct_rejections", () => 10 - retentionState.falseAlarms)
+    .log("retention_duration_ms", () => retentionState.duration);
+  retentionItems.forEach((probe, i) => {
+    const prefix = "retention_" + String(i + 1).padStart(2, "0") + "_";
+    retentionTrial = retentionTrial
+      .log(prefix + "item", probe.item)
+      .log(prefix + "sentence", probe.sentence)
+      .log(prefix + "presented_condition", probe.presentedCondition)
+      .log(prefix + "probe_condition", probe.probeCondition)
+      .log(prefix + "actually_seen", probe.seen ? 1 : 0)
+      .log(prefix + "response_seen", () => retentionState.responses[i].response)
+      .log(prefix + "correct", () => retentionState.responses[i].correct);
+  });
+  interleavedTrials.push(["retention", "PennController", retentionTrial]);
 
   window.items = (window.items || []).concat(interleavedTrials);
   return {};
