@@ -117,7 +117,6 @@ Sequence("consent",
   "demo",
   "debrief",
   "record_total_time",
-  SendResults(),
   "retention",
   SendResults(),
   "submit"
