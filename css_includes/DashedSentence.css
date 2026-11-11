@@ -4,12 +4,16 @@
     line-height: 1.5;
     justify-content: center;
     margin: auto;
-    width: 2000px;
+    width: 100%;
+    max-width: 1300px;
+    box-sizing: border-box;
+    /* Only explicit CSV line breaks may start a new line. */
+    white-space: nowrap;
     margin-top: 10%;
 }
 .ospan {
     border-bottom: 1.2px solid #9ea4b1;
-    font-size: 26px;  /* Adjust this to your preferred size */
+    font-size: 24px;
     background-color: white;
     display: inline-block;
     white-space: nowrap;
