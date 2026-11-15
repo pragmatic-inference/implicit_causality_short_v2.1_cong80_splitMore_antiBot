@@ -975,12 +975,11 @@ Template("dummy", () => {
     <p>Bitte markieren Sie alle Sätze, die Sie im Hauptteil dieses Experiments
     genau in dieser Form gelesen haben. Lassen Sie die anderen Sätze unmarkiert.
     Manche Sätze ähneln den zuvor gelesenen Sätzen, unterscheiden sich aber in Details.</p>
-    <p>Geben Sie einfach Ihr Bestes. Es spielt keine Rolle, wie viele Antworten richtig sind.</p>
+    <p>Unmarkiert bedeutet: nicht genau in dieser Form gelesen.
+    Sie können auch fortfahren, wenn Sie keinen Satz wiedererkennen.</p>
     ${retentionItems.map((probe, i) => `<label style="display:block;margin:18px 0;padding:10px;border:1px solid #ddd">
       <input type="checkbox" name="retention_${i + 1}" value="seen" />
       ${i + 1}. ${escapeRetentionHtml(probe.sentence)}</label>`).join("")}
-    <p>Unmarkiert bedeutet: nicht genau in dieser Form gelesen.
-    Sie können auch fortfahren, wenn Sie keinen Satz wiedererkennen.</p>
     </form>`;
   let retentionTrial = newTrial("retention",
     newHtml("retention_checklist", retentionHtml).cssContainer({width: "900px"}).print().log(),
