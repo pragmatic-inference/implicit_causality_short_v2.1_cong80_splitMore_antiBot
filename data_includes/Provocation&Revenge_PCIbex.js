@@ -118,6 +118,7 @@ Sequence("consent",
   "debrief",
   "record_total_time",
   "retention",
+  "record_total_time_including_retention",
   SendResults(),
   "submit"
 );
@@ -966,9 +967,10 @@ Template("dummy", () => {
   );
 
   // A separate random stream preserves all existing experimental assignments.
+  const retentionSeed = hashStringToUint32(prolificId + "|retention");
   const retentionItems = buildRetentionItems(selectedRows, criticalItems,
-    mulberry32(hashStringToUint32(prolificId + "|retention")));
-  const retentionState = { started: null, duration: null, correct: null,
+    mulberry32(retentionSeed));
+  const retentionState = { started: null, ended: null, duration: null, correct: null,
     hits: null, falseAlarms: null, responses: [] };
   const retentionHtml = `<form id="retention-form" style="font-size:20px;line-height:1.6">
     <h2>Kurzer Gedächtnistest</h2>
@@ -985,9 +987,10 @@ Template("dummy", () => {
     newHtml("retention_checklist", retentionHtml).cssContainer({width: "900px"}).print().log(),
     newFunction("retention_start", () => { retentionState.started = Date.now(); }).call(),
     newButton("retention_finish", "Antworten zum Gedächtnistest absenden")
-      .center().print().wait(),
+      .center().print().log().wait(),
     newFunction("retention_score", () => {
-      retentionState.duration = Date.now() - retentionState.started;
+      retentionState.ended = Date.now();
+      retentionState.duration = retentionState.ended - retentionState.started;
       retentionState.responses = retentionItems.map((probe, i) => {
         const checkbox = document.querySelector(`#retention-form input[name="retention_${i + 1}"]`);
         if (!checkbox) throw new Error("Missing retention checkbox " + (i + 1));
@@ -1001,6 +1004,9 @@ Template("dummy", () => {
   )
     .log("trial_type", "retention")
     .log("retention_randomization_version", "target_sentence_10_seen_10_lures_v1")
+    .log("retention_randomization_seed", retentionSeed)
+    .log("retention_start_ms", () => retentionState.started)
+    .log("retention_end_ms", () => retentionState.ended)
     .log("retention_total", 20)
     .log("retention_correct_count", () => retentionState.correct)
     .log("retention_hits", () => retentionState.hits)
@@ -1242,6 +1248,23 @@ newTrial("record_total_time",
 .log("exp_duration_sec", () =>
     window.__expDuration != null
         ? (window.__expDuration / 1000).toFixed(3)
+        : ""
+);
+
+// Separate timing fields preserve the historical pre-retention duration.
+newTrial("record_total_time_including_retention",
+    newFunction("store_total_time_including_retention", function() {
+        window.__expEndIncludingRetention = Date.now();
+        window.__expDurationIncludingRetention =
+            window.__expEndIncludingRetention - window.__expStart;
+    }).call()
+)
+.log("exp_start_ms_including_retention", () => window.__expStart ?? "")
+.log("exp_end_ms_including_retention", () => window.__expEndIncludingRetention ?? "")
+.log("exp_duration_ms_including_retention", () => window.__expDurationIncludingRetention ?? "")
+.log("exp_duration_sec_including_retention", () =>
+    window.__expDurationIncludingRetention != null
+        ? (window.__expDurationIncludingRetention / 1000).toFixed(3)
         : ""
 );
 
